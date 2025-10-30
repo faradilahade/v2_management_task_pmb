@@ -1,0 +1,29 @@
+.running-text-container {
+  position: relative;
+  width: 100%;
+}
+
+.running-text-content {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: scroll-left 60s linear infinite;
+}
+
+.running-text-item {
+  display: inline-block;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+@keyframes scroll-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.running-text-container:hover .running-text-content {
+  animation-play-state: paused;
+}
