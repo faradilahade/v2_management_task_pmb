@@ -6,7 +6,10 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  setDoc
+  setDoc,
+  getDocs,
+  query,
+  where
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 
@@ -37,9 +40,10 @@ interface AppContextType {
   notifications: Notification[];
   theme: "light" | "dark";
 
-  // auth
-  login: (username: string, password: string) => boolean;
+  // Auth
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
+  addUser: (user: Omit<User, "id">) => Promise<void>;
 
   // CRUD
   createTask: (task: Omit<Task, "id" | "createdAt">) => Promise<void>;
@@ -72,36 +76,7 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Default users (admin & sample)
-const defaultUsers: User[] = [
-  {
-    id: "1",
-    name: "Verifikator PMB",
-    email: "admin@pmb.go.id",
-    username: "admin",
-    password: "admin123",
-    role: "admin",
-    department: "IT",
-    position: "Administrator",
-    workStatus: "relaxed",
-    isActive: true,
-    isOnline: true,
-  },
-  {
-    id: "2",
-    name: "Arif Setiawan",
-    email: "arif.setiawan@pmb.go.id",
-    username: "arif",
-    password: "arif123",
-    role: "user",
-    department: "GIS",
-    position: "PIC GIS",
-    workStatus: "busy",
-    isActive: true,
-    isOnline: true,
-  },
-];
-
+// Default status
 const defaultGlobalStatus: GlobalStatus = {
   season: "hujan",
   currentIssue: "Curah hujan tinggi di wilayah hulu",
@@ -112,7 +87,7 @@ const defaultGlobalStatus: GlobalStatus = {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users, setUsers] = useState<User[]>(defaultUsers);
+  const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [floodAlerts, setFloodAlerts] = useState<FloodAlert[]>([]);
   const [damSafetyAlerts, setDamSafetyAlerts] = useState<DamSafetyAlert[]>([]);
@@ -121,7 +96,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [globalStatus, setGlobalStatus] = useState<GlobalStatus>(defaultGlobalStatus);
+  const [globalStatus] = useState<GlobalStatus>(defaultGlobalStatus);
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
   // 🌓 Theme Mode
@@ -129,9 +104,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  // 🔥 Realtime Sync dari Firestore
+  // 🔥 Realtime Sync untuk semua koleksi
   useEffect(() => {
-    const unsubscribers = [
+    const unsubs = [
+      onSnapshot(collection(db, "users"), (snap) =>
+        setUsers(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as User[])
+      ),
       onSnapshot(collection(db, "tasks"), (snap) =>
         setTasks(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Task[])
       ),
@@ -154,43 +132,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setMeetings(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Meeting[])
       ),
     ];
-    return () => unsubscribers.forEach((u) => u());
+    return () => unsubs.forEach((u) => u());
   }, []);
 
-  // 🔐 Auth (Login / Logout)
-  const login = (username: string, password: string): boolean => {
-    const user = users.find((u) => u.username === username && u.password === password);
-    if (user) {
+  // 🔐 LOGIN
+  const login = async (username: string, password: string): Promise<boolean> => {
+    const q = query(
+      collection(db, "users"),
+      where("username", "==", username),
+      where("password", "==", password)
+    );
+    const snapshot = await getDocs(q);
+    if (!snapshot.empty) {
+      const user = snapshot.docs[0].data() as User;
       setCurrentUser(user);
+      localStorage.setItem("currentUser", JSON.stringify(user));
       return true;
     }
     return false;
   };
-  const logout = () => setCurrentUser(null);
 
-  // 📦 Task CRUD
+  // 🚪 LOGOUT
+  const logout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem("currentUser");
+  };
+
+  // 🔁 Auto-login saat refresh
+  useEffect(() => {
+    const savedUser = localStorage.getItem("currentUser");
+    if (savedUser) {
+      setCurrentUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  // 👥 Add User
+  const addUser = async (user: Omit<User, "id">) => {
+    await addDoc(collection(db, "users"), { ...user });
+  };
+
+  // 📦 TASK CRUD
   const createTask = async (task: Omit<Task, "id" | "createdAt">) =>
     await addDoc(collection(db, "tasks"), { ...task, createdAt: new Date().toISOString() });
   const updateTask = async (id: string, updates: Partial<Task>) =>
     await updateDoc(doc(db, "tasks", id), updates);
-  const deleteTask = async (id: string) =>
-    await deleteDoc(doc(db, "tasks", id));
+  const deleteTask = async (id: string) => await deleteDoc(doc(db, "tasks", id));
 
   // 🌊 Flood Alert
   const addFloodAlert = async (alert: Omit<FloodAlert, "id" | "createdAt">) =>
     await addDoc(collection(db, "floodAlerts"), { ...alert, createdAt: new Date().toISOString() });
   const updateFloodAlert = async (id: string, updates: Partial<FloodAlert>) =>
     await updateDoc(doc(db, "floodAlerts", id), updates);
-  const removeFloodAlert = async (id: string) =>
-    await deleteDoc(doc(db, "floodAlerts", id));
+  const removeFloodAlert = async (id: string) => await deleteDoc(doc(db, "floodAlerts", id));
 
   // 🧱 Dam Safety
   const addDamSafetyAlert = async (alert: Omit<DamSafetyAlert, "id" | "createdAt">) =>
     await addDoc(collection(db, "damSafetyAlerts"), { ...alert, createdAt: new Date().toISOString() });
   const updateDamSafetyAlert = async (id: string, updates: Partial<DamSafetyAlert>) =>
     await updateDoc(doc(db, "damSafetyAlerts", id), updates);
-  const removeDamSafetyAlert = async (id: string) =>
-    await deleteDoc(doc(db, "damSafetyAlerts", id));
+  const removeDamSafetyAlert = async (id: string) => await deleteDoc(doc(db, "damSafetyAlerts", id));
 
   // 🌧️ Rainfall
   const addRainfallPrediction = async (prediction: Omit<RainfallPrediction, "id" | "createdAt">) =>
@@ -210,15 +210,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addActivityLog = async (log: Omit<ActivityLog, "id" | "timestamp">) =>
     await addDoc(collection(db, "activityLogs"), { ...log, timestamp: new Date().toISOString() });
 
-  // 📅 Meeting CRUD
+  // 📅 Meetings
   const addMeeting = async (meeting: Omit<Meeting, "id" | "createdAt">) =>
     await addDoc(collection(db, "meetings"), { ...meeting, createdAt: new Date().toISOString() });
   const updateMeeting = async (id: string, updates: Partial<Meeting>) =>
     await updateDoc(doc(db, "meetings", id), updates);
-  const deleteMeeting = async (id: string) =>
-    await deleteDoc(doc(db, "meetings", id));
+  const deleteMeeting = async (id: string) => await deleteDoc(doc(db, "meetings", id));
 
-  // 🌓 Theme toggle
+  // 🌗 Theme
   const toggleTheme = () => setTheme(theme === "light" ? "dark" : "light");
 
   return (
@@ -238,6 +237,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         theme,
         login,
         logout,
+        addUser,
         createTask,
         updateTask,
         deleteTask,
