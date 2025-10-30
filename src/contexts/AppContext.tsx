@@ -9,18 +9,15 @@ import {
   setDoc
 } from "firebase/firestore";
 import { db } from "../firebaseConfig";
+
 import {
   User,
   Task,
   GlobalStatus,
   Notification,
-  WorkStatus,
-  TaskStatus,
-  TodoItem,
   RainfallPrediction,
   FloodAlert,
   DamSafetyAlert,
-  WeeklyFocus,
   DispositionTask,
   ActivityLog,
   Meeting,
@@ -39,33 +36,44 @@ interface AppContextType {
   globalStatus: GlobalStatus;
   notifications: Notification[];
   theme: "light" | "dark";
+
+  // auth
   login: (username: string, password: string) => boolean;
   logout: () => void;
-  createTask: (task: Omit<Task, "id" | "createdAt">) => void;
-  updateTask: (id: string, updates: Partial<Task>) => void;
-  deleteTask: (id: string) => void;
-  addFloodAlert: (alert: Omit<FloodAlert, "id" | "createdAt">) => void;
-  updateFloodAlert: (id: string, updates: Partial<FloodAlert>) => void;
-  removeFloodAlert: (id: string) => void;
-  addDamSafetyAlert: (alert: Omit<DamSafetyAlert, "id" | "createdAt">) => void;
-  updateDamSafetyAlert: (id: string, updates: Partial<DamSafetyAlert>) => void;
-  removeDamSafetyAlert: (id: string) => void;
-  addMeeting: (meeting: Omit<Meeting, "id" | "createdAt">) => void;
-  updateMeeting: (id: string, updates: Partial<Meeting>) => void;
-  deleteMeeting: (id: string) => void;
-  addRainfallPrediction: (prediction: Omit<RainfallPrediction, "id" | "createdAt">) => void;
-  removeRainfallPrediction: (id: string) => void;
-  addDispositionTask: (task: Omit<DispositionTask, "id" | "createdAt">) => void;
-  updateDispositionTask: (id: string, updates: Partial<DispositionTask>) => void;
-  removeDispositionTask: (id: string) => void;
-  addActivityLog: (log: Omit<ActivityLog, "id" | "timestamp">) => void;
+
+  // CRUD
+  createTask: (task: Omit<Task, "id" | "createdAt">) => Promise<void>;
+  updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+
+  addFloodAlert: (alert: Omit<FloodAlert, "id" | "createdAt">) => Promise<void>;
+  updateFloodAlert: (id: string, updates: Partial<FloodAlert>) => Promise<void>;
+  removeFloodAlert: (id: string) => Promise<void>;
+
+  addDamSafetyAlert: (alert: Omit<DamSafetyAlert, "id" | "createdAt">) => Promise<void>;
+  updateDamSafetyAlert: (id: string, updates: Partial<DamSafetyAlert>) => Promise<void>;
+  removeDamSafetyAlert: (id: string) => Promise<void>;
+
+  addRainfallPrediction: (prediction: Omit<RainfallPrediction, "id" | "createdAt">) => Promise<void>;
+  removeRainfallPrediction: (id: string) => Promise<void>;
+
+  addDispositionTask: (task: Omit<DispositionTask, "id" | "createdAt">) => Promise<void>;
+  updateDispositionTask: (id: string, updates: Partial<DispositionTask>) => Promise<void>;
+  removeDispositionTask: (id: string) => Promise<void>;
+
+  addActivityLog: (log: Omit<ActivityLog, "id" | "timestamp">) => Promise<void>;
+
+  addMeeting: (meeting: Omit<Meeting, "id" | "createdAt">) => Promise<void>;
+  updateMeeting: (id: string, updates: Partial<Meeting>) => Promise<void>;
+  deleteMeeting: (id: string) => Promise<void>;
+
   toggleTheme: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Mock Users (login)
-const initialUsers: User[] = [
+// Default users (admin & sample)
+const defaultUsers: User[] = [
   {
     id: "1",
     name: "Verifikator PMB",
@@ -94,22 +102,17 @@ const initialUsers: User[] = [
   },
 ];
 
-// Default Global Status
-const initialGlobalStatus: GlobalStatus = {
+const defaultGlobalStatus: GlobalStatus = {
   season: "hujan",
   currentIssue: "Curah hujan tinggi di wilayah hulu",
   weeklyFocus: "Monitoring debit air dan kesiapan spillway",
-  weekStartDate: new Date(new Date().setDate(new Date().getDate() - new Date().getDay()))
-    .toISOString()
-    .split("T")[0],
-  weekEndDate: new Date(new Date().setDate(new Date().getDate() - new Date().getDay() + 6))
-    .toISOString()
-    .split("T")[0],
+  weekStartDate: new Date().toISOString().split("T")[0],
+  weekEndDate: new Date(new Date().setDate(new Date().getDate() + 6)).toISOString().split("T")[0],
 };
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users] = useState<User[]>(initialUsers);
+  const [users, setUsers] = useState<User[]>(defaultUsers);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [floodAlerts, setFloodAlerts] = useState<FloodAlert[]>([]);
   const [damSafetyAlerts, setDamSafetyAlerts] = useState<DamSafetyAlert[]>([]);
@@ -118,50 +121,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [globalStatus, setGlobalStatus] = useState<GlobalStatus>(initialGlobalStatus);
+  const [globalStatus, setGlobalStatus] = useState<GlobalStatus>(defaultGlobalStatus);
   const [theme, setTheme] = useState<"light" | "dark">("light");
 
-  // 🌈 Mode Tema
+  // 🌓 Theme Mode
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  // 🔥 Real-time Listeners untuk semua koleksi
+  // 🔥 Realtime Sync dari Firestore
   useEffect(() => {
-    const unsubTasks = onSnapshot(collection(db, "tasks"), (snap) => {
-      setTasks(snap.docs.map((d) => d.data() as Task));
-    });
-    const unsubFlood = onSnapshot(collection(db, "floodAlerts"), (snap) => {
-      setFloodAlerts(snap.docs.map((d) => d.data() as FloodAlert));
-    });
-    const unsubDam = onSnapshot(collection(db, "damSafetyAlerts"), (snap) => {
-      setDamSafetyAlerts(snap.docs.map((d) => d.data() as DamSafetyAlert));
-    });
-    const unsubRain = onSnapshot(collection(db, "rainfallPredictions"), (snap) => {
-      setRainfallPredictions(snap.docs.map((d) => d.data() as RainfallPrediction));
-    });
-    const unsubDisp = onSnapshot(collection(db, "dispositionTasks"), (snap) => {
-      setDispositionTasks(snap.docs.map((d) => d.data() as DispositionTask));
-    });
-    const unsubAct = onSnapshot(collection(db, "activityLogs"), (snap) => {
-      setActivityLogs(snap.docs.map((d) => d.data() as ActivityLog));
-    });
-    const unsubMeet = onSnapshot(collection(db, "meetings"), (snap) => {
-      setMeetings(snap.docs.map((d) => d.data() as Meeting));
-    });
-
-    return () => {
-      unsubTasks();
-      unsubFlood();
-      unsubDam();
-      unsubRain();
-      unsubDisp();
-      unsubAct();
-      unsubMeet();
-    };
+    const unsubscribers = [
+      onSnapshot(collection(db, "tasks"), (snap) =>
+        setTasks(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Task[])
+      ),
+      onSnapshot(collection(db, "floodAlerts"), (snap) =>
+        setFloodAlerts(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as FloodAlert[])
+      ),
+      onSnapshot(collection(db, "damSafetyAlerts"), (snap) =>
+        setDamSafetyAlerts(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as DamSafetyAlert[])
+      ),
+      onSnapshot(collection(db, "rainfallPredictions"), (snap) =>
+        setRainfallPredictions(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as RainfallPrediction[])
+      ),
+      onSnapshot(collection(db, "dispositionTasks"), (snap) =>
+        setDispositionTasks(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as DispositionTask[])
+      ),
+      onSnapshot(collection(db, "activityLogs"), (snap) =>
+        setActivityLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as ActivityLog[])
+      ),
+      onSnapshot(collection(db, "meetings"), (snap) =>
+        setMeetings(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Meeting[])
+      ),
+    ];
+    return () => unsubscribers.forEach((u) => u());
   }, []);
 
-  // 🔐 LOGIN / LOGOUT
+  // 🔐 Auth (Login / Logout)
   const login = (username: string, password: string): boolean => {
     const user = users.find((u) => u.username === username && u.password === password);
     if (user) {
@@ -172,71 +168,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
   const logout = () => setCurrentUser(null);
 
-  // 🧱 TASK CRUD
-  const createTask = async (task: Omit<Task, "id" | "createdAt">) => {
-    const newTask: Task = { ...task, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    await setDoc(doc(db, "tasks", newTask.id), newTask);
-  };
-  const updateTask = async (id: string, updates: Partial<Task>) => {
+  // 📦 Task CRUD
+  const createTask = async (task: Omit<Task, "id" | "createdAt">) =>
+    await addDoc(collection(db, "tasks"), { ...task, createdAt: new Date().toISOString() });
+  const updateTask = async (id: string, updates: Partial<Task>) =>
     await updateDoc(doc(db, "tasks", id), updates);
-  };
-  const deleteTask = async (id: string) => {
+  const deleteTask = async (id: string) =>
     await deleteDoc(doc(db, "tasks", id));
-  };
 
-  // 💧 FLOOD ALERT CRUD
-  const addFloodAlert = async (alert: Omit<FloodAlert, "id" | "createdAt">) => {
-    const newAlert = { ...alert, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    await setDoc(doc(db, "floodAlerts", newAlert.id), newAlert);
-  };
+  // 🌊 Flood Alert
+  const addFloodAlert = async (alert: Omit<FloodAlert, "id" | "createdAt">) =>
+    await addDoc(collection(db, "floodAlerts"), { ...alert, createdAt: new Date().toISOString() });
   const updateFloodAlert = async (id: string, updates: Partial<FloodAlert>) =>
     await updateDoc(doc(db, "floodAlerts", id), updates);
-  const removeFloodAlert = async (id: string) => await deleteDoc(doc(db, "floodAlerts", id));
+  const removeFloodAlert = async (id: string) =>
+    await deleteDoc(doc(db, "floodAlerts", id));
 
-  // 🧱 DAM SAFETY ALERT CRUD
-  const addDamSafetyAlert = async (alert: Omit<DamSafetyAlert, "id" | "createdAt">) => {
-    const newAlert = { ...alert, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    await setDoc(doc(db, "damSafetyAlerts", newAlert.id), newAlert);
-  };
+  // 🧱 Dam Safety
+  const addDamSafetyAlert = async (alert: Omit<DamSafetyAlert, "id" | "createdAt">) =>
+    await addDoc(collection(db, "damSafetyAlerts"), { ...alert, createdAt: new Date().toISOString() });
   const updateDamSafetyAlert = async (id: string, updates: Partial<DamSafetyAlert>) =>
     await updateDoc(doc(db, "damSafetyAlerts", id), updates);
   const removeDamSafetyAlert = async (id: string) =>
     await deleteDoc(doc(db, "damSafetyAlerts", id));
 
-  // 🌧️ RAINFALL PREDICTIONS CRUD
-  const addRainfallPrediction = async (prediction: Omit<RainfallPrediction, "id" | "createdAt">) => {
-    const newPred = { ...prediction, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    await setDoc(doc(db, "rainfallPredictions", newPred.id), newPred);
-  };
+  // 🌧️ Rainfall
+  const addRainfallPrediction = async (prediction: Omit<RainfallPrediction, "id" | "createdAt">) =>
+    await addDoc(collection(db, "rainfallPredictions"), { ...prediction, createdAt: new Date().toISOString() });
   const removeRainfallPrediction = async (id: string) =>
     await deleteDoc(doc(db, "rainfallPredictions", id));
 
-  // 🗂️ DISPOSITION CRUD
-  const addDispositionTask = async (task: Omit<DispositionTask, "id" | "createdAt">) => {
-    const newTask = { ...task, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    await setDoc(doc(db, "dispositionTasks", newTask.id), newTask);
-  };
+  // 🗂️ Disposition Task
+  const addDispositionTask = async (task: Omit<DispositionTask, "id" | "createdAt">) =>
+    await addDoc(collection(db, "dispositionTasks"), { ...task, createdAt: new Date().toISOString() });
   const updateDispositionTask = async (id: string, updates: Partial<DispositionTask>) =>
     await updateDoc(doc(db, "dispositionTasks", id), updates);
   const removeDispositionTask = async (id: string) =>
     await deleteDoc(doc(db, "dispositionTasks", id));
 
-  // 🧾 ACTIVITY LOG
-  const addActivityLog = async (log: Omit<ActivityLog, "id" | "timestamp">) => {
-    const newLog = { ...log, id: Date.now().toString(), timestamp: new Date().toISOString() };
-    await setDoc(doc(db, "activityLogs", newLog.id), newLog);
-  };
+  // 🧾 Activity Log
+  const addActivityLog = async (log: Omit<ActivityLog, "id" | "timestamp">) =>
+    await addDoc(collection(db, "activityLogs"), { ...log, timestamp: new Date().toISOString() });
 
-  // 📅 MEETINGS CRUD
-  const addMeeting = async (meeting: Omit<Meeting, "id" | "createdAt">) => {
-    const newMeeting = { ...meeting, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    await setDoc(doc(db, "meetings", newMeeting.id), newMeeting);
-  };
+  // 📅 Meeting CRUD
+  const addMeeting = async (meeting: Omit<Meeting, "id" | "createdAt">) =>
+    await addDoc(collection(db, "meetings"), { ...meeting, createdAt: new Date().toISOString() });
   const updateMeeting = async (id: string, updates: Partial<Meeting>) =>
     await updateDoc(doc(db, "meetings", id), updates);
-  const deleteMeeting = async (id: string) => await deleteDoc(doc(db, "meetings", id));
+  const deleteMeeting = async (id: string) =>
+    await deleteDoc(doc(db, "meetings", id));
 
-  // 🌓 TOGGLE THEME
+  // 🌓 Theme toggle
   const toggleTheme = () => setTheme(theme === "light" ? "dark" : "light");
 
   return (
