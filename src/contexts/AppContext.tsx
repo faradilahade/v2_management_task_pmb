@@ -136,21 +136,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // 🔐 LOGIN
-  const login = async (username: string, password: string): Promise<boolean> => {
-    const q = query(
-      collection(db, "users"),
-      where("username", "==", username),
-      where("password", "==", password)
+const login = async (username: string, password: string): Promise<boolean> => {
+  try {
+    const q = query(collection(db, "users"));
+    const snap = await getDocs(q);
+
+    const usersList = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as User[];
+
+    const found = usersList.find(
+      (u) =>
+        u.username.trim().toLowerCase() === username.trim().toLowerCase() &&
+        u.password.trim() === password.trim()
     );
-    const snapshot = await getDocs(q);
-    if (!snapshot.empty) {
-      const user = snapshot.docs[0].data() as User;
-      setCurrentUser(user);
-      localStorage.setItem("currentUser", JSON.stringify(user));
+
+    if (found) {
+      console.log("✅ Login berhasil:", found.username);
+      setCurrentUser(found);
+      localStorage.setItem("currentUser", JSON.stringify(found));
       return true;
+    } else {
+      console.warn("⚠️ Username atau password salah!");
+      return false;
     }
+  } catch (err) {
+    console.error("🔥 Gagal login:", err);
     return false;
-  };
+  }
+};
 
   // 🚪 LOGOUT
   const logout = () => {
