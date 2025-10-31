@@ -178,6 +178,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // 🚪 LOGOUT
   const logout = () => {
+    console.log("🚪 User logged out: .... ");
     setCurrentUser(null);
     localStorage.removeItem("currentUser");
   };
@@ -185,10 +186,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // 🔁 Auto-login saat refresh
   useEffect(() => {
     const savedUser = localStorage.getItem("currentUser");
-    if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
+    if (!savedUser) return;
+    try {
+      const parsedUser = JSON.parse(savedUser);
+      console.log("🔁 Auto-login dari localStorage:", parsedUser.username);
+
+      const q = query(
+        collection(db, "users"),
+        where("username", "==", parsedUser.username),
+        where("isActive", "==", true)
+      );
+
+      getDocs(q).then((snapshot) => {
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          const user = { id: docSnap.id, ...docSnap.data() } as User;
+          setCurrentUser(user);
+          console.log("✅ Auto-login berhasil:", user);
+        } else {
+          console.warn("⚠️ Auto-login gagal: User tidak aktif atau tidak ditemukan.");
+          localStorage.removeItem("currentUser");
+        }
+      });
+    } catch (err) {
+      console.error("🔥 Error saat auto-login:", err);
+      localStorage.removeItem("currentUser");
     }
   }, []);
+  
 
   // 👥 Add User
   const addUser = async (user: Omit<User, "id">) => {
