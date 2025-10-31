@@ -136,20 +136,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // 🔐 LOGIN
+  // const login = async (username: string, password: string): Promise<boolean> => {
+  //   const q = query(
+  //     collection(db, "users"),
+  //     where("username", "==", username),
+  //     where("password", "==", password)
+  //   );
+  //   const snapshot = await getDocs(q);
+  //   if (!snapshot.empty) {
+  //     const user = snapshot.docs[0].data() as User;
+  //     setCurrentUser(user);
+  //     localStorage.setItem("currentUser", JSON.stringify(user));
+  //     return true;
+  //   }
+  //   return false;
+  // };
   const login = async (username: string, password: string): Promise<boolean> => {
-    const q = query(
-      collection(db, "users"),
-      where("username", "==", username),
-      where("password", "==", password)
-    );
+    try {
+      const q = query(
+        collection(db, "users"),
+        where("username", "==", username),
+        where("password", "==", password)
+      );
     const snapshot = await getDocs(q);
     if (!snapshot.empty) {
-      const user = snapshot.docs[0].data() as User;
-      setCurrentUser(user);
-      localStorage.setItem("currentUser", JSON.stringify(user));
-      return true;
+        const docSnap = snapshot.docs[0];
+        const user = { id: docSnap.id, ...docSnap.data() } as User;
+        setCurrentUser(user);
+        localStorage.setItem("currentUser", JSON.stringify(user));
+        console.log("✅ Login berhasil:", user);
+        return true;
+    }   else {
+        console.warn("⚠️ Username atau password salah!");
+        return false;
     }
+  } catch (err) {
+    console.error("🔥 Error login:", err);
     return false;
+  }
   };
 
   // 🚪 LOGOUT
